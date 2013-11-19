@@ -23,8 +23,14 @@ class YammerUpdate:
 
     def get_people(self):
         p_k = "yammer-tmp-people2"
+        if self.people:
+            return self.people
         if self.redis.exists(p_k):
-            return json.loads(self.redis.get(p_k))
+            data = self.redis.get(p_k)
+            loaded = json.loads(self.redis.get(p_k))
+            if isinstance(loaded, dict):
+                self.people = loaded
+                return loaded
         userdata = {}
         for page in range(1, 20):
             (_, cont) = self.h.request("https://www.yammer.com/api/v1/users.json?page=%s" % page, headers=self.headers)
@@ -40,7 +46,7 @@ class YammerUpdate:
                     continue
                 userdata[user["id"]] = address 
             time.sleep(2)
-        self.redis.setex(p_k, json.dumps(userdata), 604800) # one week
+        self.redis.setex(p_k, json.dumps(userdata), 86400) # one day
         self.people = userdata
         return userdata
 
@@ -73,6 +79,8 @@ class YammerUpdate:
                 return
 
     def process(self, newer_than = None):
+        if self.people is None:
+            self.get_people()
         messages = self.get_messages(newer_than)
         if newer_than is not None:
             largest = newer_than
