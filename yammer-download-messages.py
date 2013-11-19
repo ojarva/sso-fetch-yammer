@@ -1,26 +1,25 @@
+"""
+http://developer.yammer.com/introduction/#gs-authentication
+"""
 import datetime
 import redis
-import pprint
 import httplib2
 import json
 import time
 from config import Config
 
-"""
-http://developer.yammer.com/introduction/#gs-authentication
-"""
 
 class YammerUpdate:
     def __init__(self):
         self.config = Config()
         self.token = self.config.get("access-token")
         if self.token is None:
-            raise ImproperlyConfigured("No access token specified")
+            raise AttributeError("No access token specified")
         self.headers = {"Authorization": "Bearer %s" % self.token}
         self.post_queue = []
         self.h = httplib2.Http(disable_ssl_certificate_validation=True)
         self.redis = redis.Redis(host=self.config.get("redis-hostname"), port=self.config.get("redis-port"), db=self.config.get("redis-db"))
-
+        self.people = None
 
     def get_people(self):
         p_k = "yammer-tmp-people2"
@@ -28,7 +27,7 @@ class YammerUpdate:
             return json.loads(self.redis.get(p_k))
         userdata = {}
         for page in range(1, 20):
-            (resp, cont) = self.h.request("https://www.yammer.com/api/v1/users.json?page=%s" % page, headers=self.headers)
+            (_, cont) = self.h.request("https://www.yammer.com/api/v1/users.json?page=%s" % page, headers=self.headers)
             users = json.loads(cont)
             if len(users) == 0:
                 break
@@ -42,6 +41,7 @@ class YammerUpdate:
                 userdata[user["id"]] = address 
             time.sleep(2)
         self.redis.setex(p_k, json.dumps(userdata), 604800) # one week
+        self.people = userdata
         return userdata
 
     def get_messages(self, newer_than=None):
@@ -51,7 +51,7 @@ class YammerUpdate:
         url = "https://www.yammer.com/api/v1/messages.json?"
         if newer_than:
             url += "&newer_than=%s" % newer_than
-        (resp, content) = self.h.request(url, "GET", headers=self.headers)
+        (_, content) = self.h.request(url, "GET", headers=self.headers)
         messages = json.loads(content)
         self.redis.setex(p_k, json.dumps(messages), 30)
         return messages
@@ -63,7 +63,8 @@ class YammerUpdate:
         self.redis.set("yammer-newest-id", newest)
 
     def run(self):
-        self.people = self.get_people()
+        if self.people is None:
+            self.get_people()
         newest_id = self.process(self.load_newest())
         while True:
             newest_id = self.process(newest_id)
@@ -107,8 +108,8 @@ class YammerUpdate:
             self.post_queue = []
 
 def main():
-   y = YammerUpdate()
-   y.run()
+    yammer = YammerUpdate()
+    yammer.run()
 
 if __name__ == '__main__':
     main()
